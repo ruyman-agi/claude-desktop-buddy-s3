@@ -19,6 +19,11 @@ struct TamaState {
   char     promptId[40];     // pending permission request ID; empty = no prompt
   char     promptTool[20];
   char     promptHint[44];
+  // Plan usage limits (bridge extension, not in the Desktop protocol).
+  // resetAt is a millis() deadline; 0 = unknown.
+  bool     has5h, has7d;
+  uint8_t  usage5h, usage7d;
+  uint32_t reset5hAt, reset7dAt;
 };
 
 // ---------------------------------------------------------------------------
@@ -66,6 +71,20 @@ inline const char* dataScenarioName() {
 // hold whatever was on the coin cell (or 2000-01-01 if it lost power).
 static bool _rtcValid = false;
 inline bool dataRtcValid() { return _rtcValid; }
+
+static void _applyUsageWindow(JsonObject us, const char* pctKey, const char* resetKey,
+                              bool* has, uint8_t* pct, uint32_t* resetAt) {
+  JsonVariant v = us[pctKey];   // null object → null variant
+  if (v.isNull()) { *has = false; *resetAt = 0; return; }
+  float f = v.as<float>();
+  if (f < 0) f = 0;
+  if (f > 100) f = 100;
+  *pct = (uint8_t)(f + 0.5f);
+  *has = true;
+  JsonVariant r = us[resetKey];
+  *resetAt = r.isNull() ? 0 : millis() + r.as<uint32_t>() * 1000UL;
+  if (*resetAt == 0 && !r.isNull()) *resetAt = 1;   // 0 means "unknown"
+}
 
 static void _applyJson(const char* line, TamaState* out) {
   JsonDocument doc;
@@ -124,6 +143,10 @@ static void _applyJson(const char* line, TamaState* out) {
   } else {
     out->promptId[0] = 0; out->promptTool[0] = 0; out->promptHint[0] = 0;
   }
+  // {"usage":{"h5":23.5,"h5_reset":7800,"d7":41,"d7_reset":300000}} —
+  // percentages 0-100, resets as seconds from now. Absent = hide.
+  _applyUsageWindow(doc["usage"], "h5", "h5_reset", &out->has5h, &out->usage5h, &out->reset5hAt);
+  _applyUsageWindow(doc["usage"], "d7", "d7_reset", &out->has7d, &out->usage7d, &out->reset7dAt);
   out->lastUpdated = millis();
   _lastLiveMs = millis();
 }
@@ -182,6 +205,7 @@ inline void dataPoll(TamaState* out) {
   if (!out->connected) {
     out->sessionsTotal=0; out->sessionsRunning=0; out->sessionsWaiting=0;
     out->recentlyCompleted=false; out->lastUpdated=now;
+    out->has5h = false; out->has7d = false;
     strncpy(out->msg, "No Claude connected", sizeof(out->msg)-1);
     out->msg[sizeof(out->msg)-1]=0;
   }

@@ -409,6 +409,54 @@ static const char* const MON[] = {
 static const char* const DOW[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
 
 static uint8_t clockDow() { return _clkDt.weekDay % 7; }
+// Plan usage rows: "5h [=====   ]  23% 2h10". One row per known window.
+const int USAGE_ROW_H = 10;
+
+static uint8_t usageRows() { return (tama.has5h ? 1 : 0) + (tama.has7d ? 1 : 0); }
+
+static void fmtResetIn(char* out, size_t n, uint32_t resetAt) {
+  if (!resetAt) { out[0] = 0; return; }
+  int32_t left = (int32_t)(resetAt - millis()) / 1000;
+  if (left < 0) left = 0;
+  uint32_t m = left / 60, h = m / 60, d = h / 24;
+  if (d > 0)      snprintf(out, n, "%lud%luh", (unsigned long)d, (unsigned long)(h % 24));
+  else if (h > 0) snprintf(out, n, "%luh%02lu", (unsigned long)h, (unsigned long)(m % 60));
+  else            snprintf(out, n, "%lum", (unsigned long)m);
+}
+
+static void drawUsageRow(const Palette& p, int y, const char* label,
+                         uint8_t pct, uint32_t resetAt) {
+  const int BAR_X = 16, BAR_W = 50;
+  spr.setTextSize(1);
+  spr.setTextColor(p.textDim, p.bg);
+  spr.setCursor(2, y + 1);
+  spr.print(label);
+
+  uint16_t fillCol = pct >= 90 ? 0xF800 : pct >= 75 ? 0xFD20 : p.body;
+  spr.drawRect(BAR_X, y + 1, BAR_W, 7, p.textDim);
+  int fill = (BAR_W - 2) * pct / 100;
+  if (fill > 0) spr.fillRect(BAR_X + 1, y + 2, fill, 5, fillCol);
+
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%3u%%", pct);
+  spr.setTextColor(pct >= 90 ? fillCol : p.text, p.bg);
+  spr.setCursor(BAR_X + BAR_W + 3, y + 1);
+  spr.print(buf);
+
+  fmtResetIn(buf, sizeof(buf), resetAt);
+  spr.setTextColor(p.textDim, p.bg);
+  spr.setCursor(BAR_X + BAR_W + 3 + 4 * 6 + 5, y + 1);
+  spr.print(buf);
+}
+
+// Clears the two-row usage block at y (so a window that disappears
+// doesn't leave stale pixels) and paints the known windows.
+static void drawUsage(const Palette& p, int y) {
+  spr.fillRect(0, y, W, 2 * USAGE_ROW_H, p.bg);
+  if (tama.has5h) { drawUsageRow(p, y, "5h", tama.usage5h, tama.reset5hAt); y += USAGE_ROW_H; }
+  if (tama.has7d) { drawUsageRow(p, y, "7d", tama.usage7d, tama.reset7dAt); }
+}
+
 static void drawClock() {
   const Palette& p = characterPalette();
   char hm[6]; snprintf(hm, sizeof(hm), "%02u:%02u", _clkTm.hours, _clkTm.minutes);
@@ -426,6 +474,7 @@ static void drawClock() {
     spr.setTextSize(2); spr.setTextColor(p.textDim, p.bg); spr.drawString(ss, CX, 175);
     spr.setTextSize(1);                                     spr.drawString(dl, CX, 200);
     spr.setTextDatum(TL_DATUM);
+    if (usageRows()) drawUsage(p, 215);
     return;
   }
 
@@ -893,6 +942,8 @@ void drawHUD() {
   const int SHOW = 3, LH = 8, WIDTH = 21;
   const int AREA = SHOW * LH + 4;
   spr.fillRect(0, H - AREA, W, AREA, p.bg);
+  // Sits between the pet (ends ~y=140) and the transcript.
+  drawUsage(p, H - AREA - 2 - 2 * USAGE_ROW_H);
   spr.setTextSize(1);
 
   if (tama.lineGen != lastLineGen) { msgScroll = 0; lastLineGen = tama.lineGen; wake(); }
