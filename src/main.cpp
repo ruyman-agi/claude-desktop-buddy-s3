@@ -362,6 +362,12 @@ static void clockRefreshRtc() {
 }
 
 static void clockUpdateOrient() {
+  // StickS3: the landscape clock's direct-to-LCD path panics in
+  // M5.Lcd.fillScreen() right after setRotation(1/3), boot-looping the
+  // stick whenever it lies on its side on USB. Pin the clock to portrait
+  // until that path is fixed.
+  clockOrient = 0;
+  return;
   float ax, ay, az;
   compat::getAccel(&ax, &ay, &az);
   uint8_t lock = settings().clockRot;
